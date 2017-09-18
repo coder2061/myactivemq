@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans" 
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" 
+	xmlns:context="http://www.springframework.org/schema/context" 
+	xmlns:jms="http://www.springframework.org/schema/jms" 
+	xsi:schemaLocation="http://www.springframework.org/schema/beans 
+				        http://www.springframework.org/schema/beans/spring-beans-4.0.xsd 
+				        http://www.springframework.org/schema/context 
+				        http://www.springframework.org/schema/context/spring-context-4.0.xsd 
+				        http://www.springframework.org/schema/jms 
+				        http://www.springframework.org/schema/jms/spring-jms.xsd">
+
+	<description>ActiveMQ 消息队列</description>
+
+	<!-- 引入 properties 配置文件 -->
+	<context:property-placeholder location="classpath:activemq.properties" ignore-unresolvable="true" />
+
+	<!-- ActiveMQ 工厂，由对应的 JMS 服务厂商提供 -->
+	<bean id="mqConnectionFactory" class="org.apache.activemq.ActiveMQConnectionFactory">
+		<property name="brokerURL" value="${mq.brokerURL}" />
+		<property name="userName" value="${mq.userName}" />
+		<property name="password" value="${mq.password}" />
+		<!-- 信任所有的包路径 -->
+		<!-- <property name="trustAllPackages" value="true" /> -->
+		<!-- 信任指定包路径的对象 -->
+		<property name="trustedPackages">
+			<list>
+				<value>com.github</value>
+			</list>
+		</property>
+	</bean>
+
+	<!-- 连接池，可以将 Connection、Session 和 MessageProducer 池化，减少资源消耗，要依赖于  activemq-pool 包 -->
+	<bean id="pooledConnectionFactory" class="org.apache.activemq.pool.PooledConnectionFactory">
+		<property name="connectionFactory" ref="mqConnectionFactory" />
+		<property name="maxConnections" value="${mq.pool.maxConnections}" />
+	</bean>
+
+	<!-- Spring 代理工厂，用于管理真正的 ActiveMQ 工厂 -->
+	<bean id="jmsConnectionFactory" class="org.springframework.jms.connection.SingleConnectionFactory">
+		<property name="targetConnectionFactory" ref="pooledConnectionFactory" />
+	</bean>
+
+	<!-- 消息类型转换器。 producer:object->Message；consumer:Message->object -->  
+    <bean id="messageConverter" class="com.github.converter.ObjectMessageConverter"/> 
+
+	<!-- 队列模板 ，Spring 提供的 JMS 工具类，可以进行消息发送、接收等对 JMS 协议的实现，默认开启消息持久化 -->
+	<bean id="jmsTemplate" class="org.springframework.jms.core.JmsTemplate">
+		<property name="connectionFactory" ref="jmsConnectionFactory" />
+		<!-- 向 jmsTemplate 注入消息转换器，会自动帮我们转换为我们需要的对象 -->  
+        <property name="messageConverter" ref="messageConverter"/>
+        <!-- 默认发送队列 -->
+		<property name="defaultDestinationName" value="directQueue" />
+	</bean>
+
+	<!-- 这个是队列目的地，点对点的 -->
+	<bean id="directQueue" class="org.apache.activemq.command.ActiveMQQueue">
+		<constructor-arg value="directQueue" />
+	</bean>
+	<!-- 这个是主题目的地，一对多的 -->
+    <bean id="topicQueue" class="org.apache.activemq.command.ActiveMQTopic">
+        <constructor-arg value="topicQueue" />
+    </bean>
+
+	<!-- 消息监听器 -->
+	<bean id="consumerListener" class="com.github.listener.ConsumerListener" />
+	<bean id="consumerMessageListener" class="com.github.listener.ConsumerMessageListener" />
+
+	<!-- 消息监听适配器 -->
+	<bean id="listenerAdapter" class="org.springframework.jms.listener.adapter.MessageListenerAdapter">
+		<property name="delegate" ref="consumerMessageListener" />
+		<property name="defaultListenerMethod" value="onMessage" />
+	</bean>
+
+	<!-- 消费者监听容器 -->
+	<bean id="listenerContainer" class="org.springframework.jms.listener.DefaultMessageListenerContainer">
+		<property name="connectionFactory" ref="jmsConnectionFactory" />
+		<!-- 监听的队列 -->
+		<property name="destination" ref="directQueue" />
+		<!-- 指定接收消息的消息监听 -->
+		<property name="messageListener" ref="consumerMessageListener" />
+	</bean>
+
+	<!-- 消费者监听器容器 -->
+	<jms:listener-container connection-factory="jmsConnectionFactory">
+		<jms:listener destination="directQueue" ref="consumerListener" method="onMessage" />
+		<jms:listener destination="topicQueue" ref="consumerMessageListener" method="onMessage" />
+	</jms:listener-container>
+
+</beans>
